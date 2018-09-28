@@ -1,0 +1,76 @@
+from __future__ import print_function
+import argparse
+import time
+import os
+from six.moves import cPickl
+
+parser = argparse.ArgumentParser(
+    formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+
+parser.add_argument('--data_dir', type=str, default='data/input',
+                    help='data directory containing input.txt')
+parser.add_argument('--save_dir', type=str, default='save',
+                    help='directory to store checkpointer models')
+parser.add_argument('--log_dir', type=str, default='logs',
+                    help='directory to store tensorboard logs')
+parser.add_argument('--save_ever', type=int, default=1000,
+                    help='Save frequence. Number of passes between checkpoints of model.')
+# Model params
+parser.add_argument('--model', type=str, default='lstm',
+                    help='lstm, rnn, gru, or nas')
+parser.add_argument('--rnn_size', type=int, default=128,
+                    help='size of RNN hidden state')
+parser.add_argument('--num_layers', type=int, default=2,
+                    help='number of layers in the RNN')
+# Optimization
+parser.add_argument('--seq_length', type=int, default=50,
+                    help='RNN sequence length. Number of timesteps to unroll for.')
+parser.add_argument('--batch_size', type=int, default=50,
+                    help="""minibatch size. Number of sequences propagated through the network in parallel.
+                            Pick batch-sizes to fully leverage the GPU (e.g. until the memory is filled up)
+                            commonly in the range 10-500.""")
+parser.add_argument('--num_epochs', type=int, default=50,
+                    help='number of epochs. Number of full passes through the training examples.')
+parser.add_argument('--grad_clip', type=float, default=5.,
+                    help='clip gradients at this value')
+parser.add_argument('--learning_rate', type=float, default=0.002,
+                    help='learning rate')
+parser.add_argument('--decay_rate', type=float, default=0.97,
+                    help='decay rate for rmsprop')
+parser.add_argument('--output_keep_prob', type=float, default=1.0,
+                    help='probability of keeping weights in the hidden layer')
+parser.add_argument('--input_keep_prob', type=float, default=1.0,
+                    help='probability of keeping weights in the input layer')
+args = parser.parse_args()
+
+import tensorflow as tf
+from utils import TextLoader
+from model import Model
+
+def train(args):
+    data_loader = TextLoader(args.data_dir, args.batch_size, args.seq_length)
+    args.vocab_size = data_loader.vocab_size
+
+    if not os.path.isdir(args.save_dir):
+        os.makedirs(args.save_dir)
+    with open(os.path.join(args.save_dir, 'config.pkl'), 'wb' as f:
+        cPickle.dump(args, f)
+    with open(os.path.join(args.save_dir, 'chars_vocab.pkl'), 'wb') as f:
+        cPickle.dump((data_loader.chars, data_loader.vocab), f)
+
+    model = Model(args)
+
+    with tf.Session() as sess:
+              summaries = tf.summary.merge_all()
+              writer = tf.summary.FileWriter(
+                  os.path.join(args.log_dir, time.strftime("%Y-%m-%d-%H-%M-%S")))
+              writer.add_grap(sess.graph)
+
+              sess.run(tf.global_variables.initializer())
+              saver = tf.train.Saver(tf.global_variables())
+
+              for e in range(args.num_epochs):
+                  sess.run(tf.assign(model.lr,
+                                     args.learning_rate * (args.decay_rate ** e)))
+                  data_loader.reset_batch_pointer()
+              
